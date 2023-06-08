@@ -29,15 +29,56 @@
 			import * as THREE from 'three';
 
 			import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+			import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 
 			import { VertexNormalsHelper } from 'three/addons/helpers/VertexNormalsHelper.js';
 			import { VertexTangentsHelper } from 'three/addons/helpers/VertexTangentsHelper.js';
+			import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
+			import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
 
 			let scene, renderer;
 			let camera, light;
-			let vnh;
-			let vth;
+			let mouse={
+					x: 0,
+					y: 0
+				};
+			let controls;
+			const vertexShader = `
+			uniform float time;
+			varying vec2 vUv;
+			
+			void main() {
+				vUv = uv;
+				vec3 pos = position;
+				pos.z += sin(pos.x * 10.0 + time) * 0.1; // 根据时间改变顶点位置
+				pos.z += sin(pos.y * 10.0 + time) * 0.1;
+				gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+			}
+			`;
 
+			const fragmentShader = `
+			uniform float time;
+			varying vec2 vUv;
+			
+			void main() {
+				float r = sin(vUv.x * 10.0 + time) * 0.5 + 0.5; // 根据时间改变片元颜色
+				float g = sin(vUv.y * 10.0 + time) * 0.5 + 0.5;
+				float b = cos((vUv.x + vUv.y) * 10.0 + time) * 0.5 + 0.5;
+				gl_FragColor = vec4(r, g, b, 1.0);
+			}
+			`;
+
+			let cubeCamera, cubeRenderTarget;
+			let material,material1;
+			// sphere = new THREE.Mesh( new THREE.IcosahedronGeometry( 15, 8 ), material );
+			// scene.add( sphere );
+			material = new THREE.ShaderMaterial({
+				vertexShader,
+				fragmentShader,
+				uniforms: {
+					time: { value: 0 },
+				},
+			});
 			init();
 			animate();
 
@@ -46,12 +87,15 @@
 				renderer = new THREE.WebGLRenderer();
 				renderer.setPixelRatio( window.devicePixelRatio );
 				renderer.setSize( window.innerWidth, window.innerHeight );
+				// renderer.setAnimationLoop( animation );
+				renderer.toneMapping = THREE.ACESFilmicToneMapping;
 				document.body.appendChild( renderer.domElement );
 
 				//
 
-				camera = new THREE.PerspectiveCamera( 70, window.innerWidth / window.innerHeight, 1, 1000 );
+				camera = new THREE.PerspectiveCamera( 70, window.innerWidth / window.innerHeight, 1, 100000 );
 				camera.position.z = 400;
+				controls = new TrackballControls( camera, renderer.domElement );
 
 				scene = new THREE.Scene();
 
@@ -60,71 +104,92 @@
 				scene.add( light );
 
 				scene.add( new THREE.PointLightHelper( light, 15 ) );
+				new RGBELoader()
+					.setPath( 'textures/equirectangular/' )
+					.load( 'quarry_01_1k.hdr', function ( texture ) {
 
-				const gridHelper = new THREE.GridHelper( 400, 40, 0x0000ff, 0x808080 );
-				gridHelper.position.y = - 150;
-				gridHelper.position.x = - 150;
-				scene.add( gridHelper );
+						texture.mapping = THREE.EquirectangularReflectionMapping;
 
-				const polarGridHelper = new THREE.PolarGridHelper( 200, 16, 8, 64, 0x0000ff, 0x808080 );
-				polarGridHelper.position.y = - 150;
-				polarGridHelper.position.x = 200;
-				scene.add( polarGridHelper );
+						scene.background = texture;
+						scene.environment = texture;
 
-				const loader = new GLTFLoader();
-				loader.load( 'models/gltf/LeePerrySmith/LeePerrySmith.glb', function ( gltf ) {
-
-					const mesh = gltf.scene.children[ 0 ];
-
-					mesh.geometry.computeTangents(); // generates bad data due to degenerate UVs
-
-					const group = new THREE.Group();
-					group.scale.multiplyScalar( 50 );
-					scene.add( group );
-
-					// To make sure that the matrixWorld is up to date for the boxhelpers
-					group.updateMatrixWorld( true );
-
-					group.add( mesh );
-
-					vnh = new VertexNormalsHelper( mesh, 5 );
-					scene.add( vnh );
-
-					vth = new VertexTangentsHelper( mesh, 5 );
-					scene.add( vth );
-
-					scene.add( new THREE.BoxHelper( mesh ) );
-
-					const wireframe = new THREE.WireframeGeometry( mesh.geometry );
-					let line = new THREE.LineSegments( wireframe );
-					line.material.depthTest = false;
-					line.material.opacity = 0.25;
-					line.material.transparent = true;
-					line.position.x = 4;
-					group.add( line );
-					scene.add( new THREE.BoxHelper( line ) );
-
-					const edges = new THREE.EdgesGeometry( mesh.geometry );
-					line = new THREE.LineSegments( edges );
-					line.material.depthTest = false;
-					line.material.opacity = 0.25;
-					line.material.transparent = true;
-					line.position.x = - 4;
-					group.add( line );
-					scene.add( new THREE.BoxHelper( line ) );
-
-					scene.add( new THREE.BoxHelper( group ) );
-					scene.add( new THREE.BoxHelper( scene ) );
-
-
-				} );
+					} );
 
 				//
 
+				cubeRenderTarget = new THREE.WebGLCubeRenderTarget( 256 );
+				cubeRenderTarget.texture.type = THREE.HalfFloatType;
+
+				cubeCamera = new THREE.CubeCamera( 1, 1000, cubeRenderTarget );
+
+				//
+
+				material1 = new THREE.MeshStandardMaterial( {
+					envMap: cubeRenderTarget.texture,
+					roughness: 0.05,
+					metalness: 1
+				} );
+
+				const gui = new GUI();
+				gui.add( material1, 'roughness', 0, 1 );
+				gui.add( material1, 'metalness', 0, 1 );
+				gui.add( renderer, 'toneMappingExposure', 0, 2 ).name( 'exposure' );
+
+
+				const loader = new GLTFLoader();
+
+
+				loader.load(
+					'models/gltf/jiaizi.glb',
+					(gltf) => {
+						let meshes = gltf.scene.children;
+						const g = new THREE.Group();
+						g.position.copy(gltf.scene.position);
+						g.rotation.copy(gltf.scene.rotation);
+						g.scale.set(0.1, 0.1, 0.1);
+						scene.add( g );
+						setMesh(meshes,g)
+						console.log(g);
+					},
+					undefined,
+					(error) => {
+						console.error(error);
+					}
+				);
+			
 				window.addEventListener( 'resize', onWindowResize );
 
 			}
+			function setMesh(meshes,group){
+				if(meshes.lenght==0)return;
+				for(let i=meshes.length-1;i>=0;i--){
+					let res=meshes[i];
+					if(res instanceof THREE.Mesh){
+						res.material = material1;
+						group.add(res);
+						
+						// const edges = new THREE.EdgesGeometry( res.geometry );
+						// let line = new THREE.LineSegments( edges );
+						// line.material=material;
+						// line.position.copy(res.position);
+						// line.rotation.copy(res.rotation);
+						// group.add( line );
 
+					}else if(res instanceof Array){						
+						res.forEach(r=>{
+							setMesh(r,group)
+						})
+					}else if(res instanceof THREE.Object3D){
+						const g = new THREE.Group();
+						g.position.copy(res.position);
+						g.rotation.copy(res.rotation);
+						group.add( g );
+						setMesh(res.children,g)
+					}
+				}
+			}
+// 创建一个自定义的顶点着色器和片元着色器
+			
 			function onWindowResize() {
 
 				camera.aspect = window.innerWidth / window.innerHeight;
@@ -133,24 +198,26 @@
 				renderer.setSize( window.innerWidth, window.innerHeight );
 
 			}
+			// 监听鼠标移动事件
+			window.addEventListener('mousemove', onMouseMove);
+
+			// 鼠标移动事件的处理函数
+			function onMouseMove(event) {
+				// 计算鼠标在窗口中的标准设备坐标（NDC）
+				mouse = {
+					x: (event.clientX / window.innerWidth) * 2 - 1,
+					y: -(event.clientY / window.innerHeight) * 2 + 1
+				};
+
+			}
 
 			function animate() {
 
 				requestAnimationFrame( animate );
+				cubeCamera.update( renderer, scene );
 
-				const time = - performance.now() * 0.0003;
-
-				camera.position.x = 400 * Math.cos( time );
-				camera.position.z = 400 * Math.sin( time );
-				camera.lookAt( scene.position );
-
-				light.position.x = Math.sin( time * 1.7 ) * 300;
-				light.position.y = Math.cos( time * 1.5 ) * 400;
-				light.position.z = Math.cos( time * 1.3 ) * 300;
-
-				if ( vnh ) vnh.update();
-				if ( vth ) vth.update();
-
+				material.uniforms.time.value = mouse.x+mouse.y;
+				controls.update();
 				renderer.render( scene, camera );
 
 			}

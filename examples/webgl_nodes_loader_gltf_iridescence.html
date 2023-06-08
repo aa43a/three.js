@@ -72,7 +72,8 @@
 				const gltfLoader = new GLTFLoader().setPath( 'models/gltf/' );
 
 				const [ texture, gltf ] = await Promise.all( [
-					rgbeLoader.loadAsync( 'venice_sunset_1k.hdr' ),
+					// rgbeLoader.loadAsync( 'san_giuseppe_bridge_2k.hdr' ),
+					rgbeLoader.loadAsync( 'san_giuseppe_bridge_2k.hdr' ),
 					gltfLoader.loadAsync( 'IridescenceLamp.glb' ),
 				] );
 
